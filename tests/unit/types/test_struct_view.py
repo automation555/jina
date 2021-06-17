@@ -60,6 +60,12 @@ def test_struct_view(struct_proto):
 
 def test_struct_view_set_items(struct_proto):
     view = StructView(struct_proto)
+    view['key_array'][0] = 2
+    assert view['key_array'][0] == 2
+
+
+def test_struct_view_set_listitems(struct_proto):
+    view = StructView(struct_proto)
     view['key_int'] = 20
     view['key_new'] = 30
     view['key_nested']['key_nested_nested']['empty'] = [1, 2, 3]
