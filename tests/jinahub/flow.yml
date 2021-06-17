@@ -1,0 +1,11 @@
+!Flow
+version: '1'
+with:
+  read_only: true
+  restful: true
+  port_expose: 45678
+pods:
+  - name: pod1
+    uses: docker://hubpod:test
+  - name: pod2
+    uses: docker://hubpod:test
