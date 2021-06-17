@@ -241,13 +241,13 @@ def test_documentarray_filter():
     da = DocumentArray([Document() for _ in range(6)])
 
     for j in range(6):
-        da[j].scores['score'].value = j
+        da[j].score.value = j
 
-    da = [d for d in da if d.scores['score'].value > 2]
+    da = [d for d in da if d.score.value > 2]
     assert len(DocumentArray(da)) == 3
 
     for d in da:
-        assert d.scores['score'].value > 2
+        assert d.score.value > 2
 
 
 def test_da_with_different_inputs():
@@ -272,6 +272,18 @@ def test_da_sort_by_document_interface_not_in_proto():
     assert da[0].embedding.shape == (1,)
 
 
+def test_da_sort_by_document_interface_in_proto():
+    docs = [Document(embedding=np.array([1] * (10 - i))) for i in range(10)]
+    da = DocumentArray(
+        [docs[i] if (i % 2 == 0) else docs[i].proto for i in range(len(docs))]
+    )
+    assert len(da) == 10
+    assert da[0].embedding.shape == (10,)
+
+    da.sort(key=lambda d: d.embedding.dense.shape[0])
+    assert da[0].embedding.shape == (1,)
+
+
 def test_da_reverse():
     docs = [Document(embedding=np.array([1] * (10 - i))) for i in range(10)]
     da = DocumentArray(
@@ -279,27 +291,6 @@ def test_da_reverse():
     )
     assert len(da) == 10
     assert da[0].embedding.shape == (10,)
+
     da.reverse()
     assert da[0].embedding.shape == (1,)
-
-
-def test_da_sort_by_score():
-    da = DocumentArray(
-        [Document(id=i, copy=True, scores={'euclid': 10 - i}) for i in range(10)]
-    )
-    assert da[0].id == '0'
-    assert da[0].scores['euclid'].value == 10
-    da.sort(key=lambda d: d.scores['euclid'].value)  # sort matches by their values
-    assert da[0].id == '9'
-    assert da[0].scores['euclid'].value == 1
-
-
-def test_da_sort_by_score():
-    da = DocumentArray(
-        [Document(id=i, copy=True, scores={'euclid': 10 - i}) for i in range(10)]
-    )
-    assert da[0].id == '0'
-    assert da[0].scores['euclid'].value == 10
-    da.sort(key=lambda d: d.scores['euclid'].value)  # sort matches by their values
-    assert da[0].id == '9'
-    assert da[0].scores['euclid'].value == 1
