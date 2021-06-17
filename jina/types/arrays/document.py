@@ -13,13 +13,11 @@ from typing import (
     Optional,
     Generator,
     BinaryIO,
-    TypeVar,
 )
 
 from .traversable import TraversableSequence
 from ...helper import typename, cached_property
-from ..document import Document
-from ...proto import jina_pb2
+from ...proto.jina_pb2 import DocumentProto, DocumentArrayProto
 
 try:
     # when protobuf using Cpp backend
@@ -33,13 +31,6 @@ except:
     )
 
 __all__ = ['DocumentArray', 'DocumentArrayGetAttrMixin']
-
-DocumentArraySourceType = TypeVar(
-    'DocumentArraySourceType',
-    jina_pb2.DocumentArrayProto,
-    List[Document],
-    List[jina_pb2.DocumentProto],
-)
 
 if False:
     from ..document import Document
@@ -107,46 +98,24 @@ class DocumentArray(
     It gives an efficient view of a list of Document. One can iterate over it like
     a generator but ALSO modify it, count it, get item, or union two 'DocumentArray's using the '+' and '+=' operators.
 
-    It is supposed to act as a view containing a pointer to a `RepeatedContainer` of `DocumentProto` while offering `Document` Jina native types
-    when getting items or iterating over it
-
-    :param docs: the document array to construct from. One can also give `DocumentArrayProto` directly, then depending on the ``copy``,
-                it builds a view or a copy from it. It also can accept a List
+    :param doc_views: A list of :class:`Document`
+    :type doc_views: Optional[Union['RepeatedContainer', Iterable['Document']]]
     """
 
-    def __init__(self, docs: Optional[DocumentArraySourceType] = None):
+    def __init__(
+        self,
+        doc_views: Optional[Union['RepeatedContainer', Iterable['Document']]] = None,
+    ):
         super().__init__()
-        self._pb_body = []
-        if docs is not None:
-            if isinstance(docs, jina_pb2.DocumentArrayProto):
-                # This would happen when loading from file or memmap
-                self._pb_body = docs.docs
-            elif isinstance(docs, RepeatedContainer):
-                # This would happen when `doc.matches` or `doc.chunks`
-                self._pb_body = docs
-            elif isinstance(docs, DocumentArray):
-                # This would happen in the client
-                self._pb_body = docs._pb_body
-            elif isinstance(docs, list):
-                # This would happen in the client
-                for doc in docs:
-                    if isinstance(doc, Document):
-                        self._pb_body.append(doc.proto)
-                    elif isinstance(doc, jina_pb2.DocumentProto):
-                        self._pb_body.append(doc)
-                    else:
-                        raise ValueError(f'Unexpected element in an input list')
-            else:
-                from .memmap import DocumentArrayMemmap
+        if doc_views is not None:
+            from .memmap import DocumentArrayMemmap
 
-                if isinstance(docs, (Generator, DocumentArrayMemmap)):
-                    docs = list(docs)
-                    for doc in docs:
-                        self.append(doc)
-                else:
-                    raise ValueError(
-                        f'DocumentArray got an unexpected input {type(docs)}'
-                    )
+            if isinstance(doc_views, (Generator, DocumentArrayMemmap)):
+                self._doc_views = list(doc_views)
+            else:
+                self._doc_views = doc_views
+        else:
+            self._doc_views = []
 
     def insert(self, index: int, doc: 'Document') -> None:
         """
@@ -155,7 +124,7 @@ class DocumentArray(
         :param index: Position of the insertion.
         :param doc: The doc needs to be inserted.
         """
-        self._pb_body.insert(index, doc.proto)
+        self._doc_views.insert(index, doc.proto)
 
     def __setitem__(self, key, value: 'Document'):
         if isinstance(key, int):
@@ -167,11 +136,11 @@ class DocumentArray(
 
     def __delitem__(self, index: Union[int, str, slice]):
         if isinstance(index, int):
-            del self._pb_body[index]
+            del self._doc_views[index]
         elif isinstance(index, str):
             del self[self._id_to_index[index]]
         elif isinstance(index, slice):
-            del self._pb_body[index]
+            del self._doc_views[index]
         else:
             raise IndexError(
                 f'do not support this index type {typename(index)}: {index}'
@@ -179,18 +148,21 @@ class DocumentArray(
 
     def __eq__(self, other):
         return (
-            type(self._pb_body) is type(other._pb_body)
-            and self._pb_body == other._pb_body
+            type(self._doc_views) is type(other._doc_views)
+            and self._doc_views == other._doc_views
         )
 
     def __len__(self):
-        return len(self._pb_body)
+        return len(self._doc_views)
 
     def __iter__(self) -> Iterator['Document']:
         from ..document import Document
 
-        for d in self._pb_body:
-            yield Document(d)
+        for d in self._doc_views:
+            if not isinstance(d, Document):
+                yield Document(d, hash_content=False)
+            else:
+                yield d
 
     def __contains__(self, item: str):
         return item in self._id_to_index
@@ -199,11 +171,15 @@ class DocumentArray(
         from ..document import Document
 
         if isinstance(item, int):
-            return Document(self._pb_body[item])
+            view = self._doc_views[item]
+            if not isinstance(view, Document):
+                return Document(view)
+            else:
+                return view
         elif isinstance(item, str):
             return self[self._id_to_index[item]]
         elif isinstance(item, slice):
-            return DocumentArray(self._pb_body[item])
+            return DocumentArray(self._doc_views[item])
         else:
             raise IndexError(f'do not support this index type {typename(item)}: {item}')
 
@@ -226,7 +202,7 @@ class DocumentArray(
 
         :param doc: The doc needs to be appended.
         """
-        self._pb_body.append(doc.proto)
+        self._doc_views.append(doc.proto)
 
     def extend(self, iterable: Iterable['Document']) -> None:
         """
@@ -239,45 +215,37 @@ class DocumentArray(
 
     def clear(self):
         """Clear the data of :class:`DocumentArray`"""
-        while len(self._pb_body) > 0:
-            self._pb_body.pop()
+        del self._doc_views[:]
 
     def reverse(self):
         """In-place reverse the sequence."""
-        size = len(self._pb_body)
-        hi_idx = size - 1
-        for i in range(int(size / 2)):
-            tmp = jina_pb2.DocumentProto()
-            tmp.CopyFrom(self._pb_body[hi_idx])
-            self._pb_body[hi_idx].CopyFrom(self._pb_body[i])
-            self._pb_body[i].CopyFrom(tmp)
-            hi_idx -= 1
+        if isinstance(self._doc_views, RepeatedContainer):
+            size = len(self._doc_views)
+            hi_idx = size - 1
+            for i in range(int(size / 2)):
+                tmp = DocumentProto()
+                tmp.CopyFrom(self._doc_views[hi_idx])
+                self._doc_views[hi_idx].CopyFrom(self._doc_views[i])
+                self._doc_views[i].CopyFrom(tmp)
+                hi_idx -= 1
+        elif isinstance(self._doc_views, list):
+            self._doc_views.reverse()
 
     @cached_property
     def _id_to_index(self):
         """Returns a doc_id to index in list
 
         .. # noqa: DAR201"""
-        return {d.id: i for i, d in enumerate(self._pb_body)}
+        return {d.id: i for i, d in enumerate(self._doc_views)}
 
-    def sort(self, key=None, *args, **kwargs):
+    def sort(self, *args, **kwargs):
         """
         Sort the items of the :class:`DocumentArray` in place.
 
-        :param key: key callable to sort based upon
         :param args: variable set of arguments to pass to the sorting underlying function
         :param kwargs: keyword arguments to pass to the sorting underlying function
         """
-
-        def overriden_key(proto):
-            # Function to override the `proto` and wrap it around a `Document` to enable sorting via `Document-like` interface
-            d = Document(proto)
-            return key(d)
-
-        if key:
-            self._pb_body.sort(key=overriden_key, *args, **kwargs)
-        else:
-            self._pb_body.sort(*args, **kwargs)
+        self._doc_views.sort(*args, **kwargs)
 
     def __bool__(self):
         """To simulate ```l = []; if l: ...```
@@ -289,19 +257,22 @@ class DocumentArray(
     def __str__(self):
         from ..document import Document
 
-        content = f'{self.__class__.__name__} has {len(self._pb_body)} items'
+        if hasattr(self._doc_views, '__len__'):
+            content = f'{self.__class__.__name__} has {len(self._doc_views)} items'
 
-        if len(self._pb_body) > 3:
-            content += ' (showing first three)'
+            if len(self._doc_views) > 3:
+                content += ' (showing first three)'
+        else:
+            content = 'unknown length array'
 
         content += ':\n'
-        content += ',\n'.join(str(Document(d)) for d in self._pb_body[:3])
+        content += ',\n'.join(str(Document(d)) for d in self._doc_views[:3])
 
         return content
 
     def __repr__(self):
         content = ' '.join(
-            f'{k}={v}' for k, v in {'length': len(self._pb_body)}.items()
+            f'{k}={v}' for k, v in {'length': len(self._doc_views)}.items()
         )
         content += f' at {id(self)}'
         content = content.strip()
@@ -355,9 +326,12 @@ class DocumentArray(
             file_ctx = open(file, 'wb')
 
         with file_ctx as fp:
-            dap = jina_pb2.DocumentArrayProto()
-            if self._pb_body:
-                dap.docs.extend(self._pb_body)
+            dap = DocumentArrayProto()
+            if self._doc_views:
+                if isinstance(self._doc_views[0], DocumentProto):
+                    dap.docs.extend(self._doc_views)
+                else:
+                    dap.docs.extend([d.proto for d in self._doc_views])
             fp.write(dap.SerializeToString())
 
     def save_json(self, file: Union[str, TextIO]) -> None:
@@ -413,7 +387,7 @@ class DocumentArray(
         else:
             file_ctx = open(file, 'rb')
 
-        dap = jina_pb2.DocumentArrayProto()
+        dap = DocumentArrayProto()
 
         with file_ctx as fp:
             dap.ParseFromString(fp.read())

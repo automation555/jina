@@ -8,6 +8,8 @@ import tensorflow as tf
 import torch
 from scipy.sparse import coo_matrix, bsr_matrix, csr_matrix, csc_matrix
 
+from jina import DocumentArray
+from jina.logging.profile import TimeContext
 from jina.proto.jina_pb2 import DocumentProto
 from jina.types.document import Document
 from jina.types.ndarray.generic import NdArray
@@ -514,25 +516,25 @@ def test_document_to_json(expected_doc_fields, ignored_doc_fields):
     doc = Document()
     doc_dict = json.loads(doc.json())
     present_keys = sorted(doc_dict.keys())
-    assert present_keys == ['id']
+    assert present_keys == ['content_hash', 'id']
 
 
 def test_document_to_dict(expected_doc_fields, ignored_doc_fields):
     doc = Document()
     doc_dict = doc.dict()
     present_keys = sorted(doc_dict.keys())
-    assert present_keys == ['id']
+    assert present_keys == ['content_hash', 'id']
 
 
 def test_non_empty_fields():
-    d_score = Document(scores={'score': NamedScore(value=42)})
-    assert d_score.non_empty_fields == ('id', 'scores')
+    d_score = Document(score=NamedScore(value=42))
+    assert d_score.non_empty_fields == ('id', 'score', 'content_hash')
 
     d = Document()
-    assert d.non_empty_fields == ('id',)
+    assert d.non_empty_fields == ('id', 'content_hash')
 
     d = Document(id='')
-    assert not d.non_empty_fields
+    assert d.non_empty_fields == ('content_hash',)
 
 
 def test_get_attr_values():
@@ -545,20 +547,21 @@ def test_get_attr_values():
             'tags': {'id': 'identity', 'a': 'b', 'c': 'd'},
         }
     )
-    d.scores['metric'] = NamedScore(value=42)
+    d.score = NamedScore(value=42)
 
     required_keys = [
         'id',
         'text',
         'tags__name',
         'tags__feature1',
-        'scores__values__metric__value',
+        'score__value',
         'tags__c',
         'tags__id',
         'tags__inexistant',
         'inexistant',
     ]
     res = d.get_attributes(*required_keys)
+
     assert len(res) == len(required_keys)
     assert res[required_keys.index('id')] == '123'
     assert res[required_keys.index('tags__feature1')] == 121
@@ -566,7 +569,7 @@ def test_get_attr_values():
     assert res[required_keys.index('text')] == 'document'
     assert res[required_keys.index('tags__c')] == 'd'
     assert res[required_keys.index('tags__id')] == 'identity'
-    assert res[required_keys.index('scores__values__metric__value')] == 42
+    assert res[required_keys.index('score__value')] == 42
     assert res[required_keys.index('tags__inexistant')] is None
     assert res[required_keys.index('inexistant')] is None
 
@@ -686,10 +689,11 @@ def test_document_sparse_embedding(
 
 def test_evaluations():
     document = Document()
-    document.evaluations['operation'] = 10.0
-    document.evaluations['operation'].op_name = 'operation'
-    assert document.evaluations['operation'].value == 10.0
-    assert document.evaluations['operation'].op_name == 'operation'
+    score = document.evaluations.add()
+    score.op_name = 'operation'
+    score.value = 10.0
+    assert document.evaluations[0].value == 10.0
+    assert document.evaluations[0].op_name == 'operation'
 
 
 @contextmanager
@@ -717,16 +721,15 @@ def test_conflicting_doccontent(doccontent, expectation):
 @pytest.mark.parametrize('val', [1, 1.0, np.float64(1.0)])
 def test_doc_different_score_value_type(val):
     d = Document()
-    d.scores['score'] = val
-    assert int(d.scores['score'].value) == 1
+    d.score = val
+    assert int(d.score.value) == 1
 
 
 def test_doc_match_score_assign():
     d = Document(id='hello')
-    d1 = Document(d, copy=True, scores={'score': 123})
+    d1 = Document(d, copy=True, score=123)
     d.matches = [d1]
-    assert d.matches[0].scores['score'].value == 123
-    assert d.matches[0].scores['score'].ref_id == d.id
+    assert d.matches[0].score.value == 123
 
 
 def test_doc_update_given_empty_fields_and_attributes_identical(test_docs):
@@ -929,65 +932,6 @@ def test_document_pretty_json():
     assert d_reconstructed.matches[0].embedding.tolist() == [1.0, 2.0, 3.0]
 
 
-def test_document_init_with_scores_and_evaluations():
-    d = Document(
-        scores={
-            'euclidean': 50,
-            'cosine': NamedScore(value=1.0),
-            'score1': NamedScore(value=2.0).proto,
-            'score2': np.int(5),
-        },
-        evaluations={
-            'precision': 50,
-            'recall': NamedScore(value=1.0),
-            'eval1': NamedScore(value=2.0).proto,
-            'eval2': np.int(5),
-        },
-    )
-    assert d.scores['euclidean'].value == 50
-    assert d.scores['cosine'].value == 1.0
-    assert d.scores['score1'].value == 2.0
-    assert d.scores['score2'].value == 5
-
-    assert d.evaluations['precision'].value == 50
-    assert d.evaluations['recall'].value == 1.0
-    assert d.evaluations['eval1'].value == 2.0
-    assert d.evaluations['eval2'].value == 5
-
-
-def test_document_scores_delete():
-    d = Document(
-        scores={
-            'euclidean': 50,
-            'cosine': NamedScore(value=1.0),
-            'score1': NamedScore(value=2.0).proto,
-            'score2': np.int(5),
-        },
-        evaluations={
-            'precision': 50,
-            'recall': NamedScore(value=1.0),
-            'eval1': NamedScore(value=2.0).proto,
-            'eval2': np.int(5),
-        },
-    )
-    assert d.scores['euclidean'].value == 50
-    assert d.scores['cosine'].value == 1.0
-    assert d.scores['score1'].value == 2.0
-    assert d.scores['score2'].value == 5
-
-    assert d.evaluations['precision'].value == 50
-    assert d.evaluations['recall'].value == 1.0
-    assert d.evaluations['eval1'].value == 2.0
-    assert d.evaluations['eval2'].value == 5
-
-    assert 'precision' in d.evaluations
-    del d.evaluations['precision']
-    assert 'precision' not in d.evaluations
-    assert 'cosine' in d.scores
-    del d.scores['cosine']
-    assert 'cosine' not in d.scores
-
-
 def test_manipulated_tags():
     t = {
         'key_int': 0,
@@ -1039,6 +983,7 @@ def test_tags_update_nested():
 def test_tag_compare_dict():
     d = Document()
     d.tags = {'hey': {'bye': 4}}
+    print(f' d.tags {d.tags}')
     assert d.tags == {'hey': {'bye': 4}}
     assert d.tags.dict() == {'hey': {'bye': 4}}
 
@@ -1046,3 +991,59 @@ def test_tag_compare_dict():
     # TODO: Issue about having proper ListValueView
     assert d.tags != {'hey': [1, 2]}
     assert d.tags.dict() == {'hey': [1, 2]}
+
+
+def test_content_hash():
+    d0 = Document(content='a', hash_content=False)
+    assert d0.content
+    assert not d0.content_hash
+
+    empty_doc = Document()
+    assert not empty_doc.content
+    assert empty_doc.content_hash
+
+    # warning: a Doc with empty content will have a hash -- it hashes ''
+    assert empty_doc.content_hash != d0.content_hash
+
+    d1 = Document(content='text')
+    init_content_hash = d1.content_hash
+    assert init_content_hash
+    d1.update_content_hash()
+    assert init_content_hash == d1.content_hash
+
+    d2 = Document(content='text')
+    assert init_content_hash == d2.content_hash
+
+    d3 = Document(content='text1')
+    assert init_content_hash != d3.content_hash
+
+    d4 = Document(id='a')
+    d5 = Document(id='b')
+    assert d5.content_hash == d4.content_hash
+
+    d6 = Document(d2.proto)
+    assert d6.content_hash == d2.content_hash
+
+    d7 = Document(d2)
+    assert d6.content_hash == d2.content_hash == d7.content_hash
+
+    nr = 10
+    with TimeContext(f'creating {nr} docs without hashing content at init'):
+        da = DocumentArray()
+        for _ in range(nr):
+            d = Document(content='text' * 2, hash_content=False)
+            da.append(d)
+
+        with TimeContext(f'iterating through docs without content hash'):
+            for d in da:
+                assert not d.content_hash
+
+    with TimeContext(f'creating {nr} docs with hashing content at init'):
+        da = DocumentArray()
+        for _ in range(nr):
+            d = Document(content='text' * 2)
+            da.append(d)
+
+        with TimeContext(f'iterating through docs with content hash'):
+            for d in da:
+                assert d.content_hash
