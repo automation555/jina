@@ -13,6 +13,7 @@ from ...proto import jina_pb2
 
 if False:
     from ...executors import BaseExecutor
+    from ...types.routing.graph import RoutingGraph
 
 __all__ = ['Message']
 
@@ -71,6 +72,10 @@ class Message:
 
         if self.envelope.check_version:
             self._check_version()
+
+    @classmethod
+    def from_proto(cls, msg: 'jina_pb2.MessageProto'):
+        return cls(msg.envelope, msg.request)
 
     @property
     def request(self) -> 'Request':
@@ -140,6 +145,7 @@ class Message:
         compress: str = 'NONE',
         compress_min_bytes: int = 0,
         compress_min_ratio: float = 1.0,
+        routing_graph: Optional['RoutingGraph'] = None,
         *args,
         **kwargs,
     ) -> 'jina_pb2.EnvelopeProto':
@@ -159,6 +165,7 @@ class Message:
         :param compress: used compression algorithm
         :param compress_min_bytes: used for configuring compression
         :param compress_min_ratio: used for configuring compression
+        :param routing_graph: routing graph filled by gateway
         :return: the resulted protobuf message
         """
         envelope = jina_pb2.EnvelopeProto()
@@ -200,6 +207,8 @@ class Message:
         envelope.compression.min_ratio = compress_min_ratio
         envelope.compression.min_bytes = compress_min_bytes
         envelope.timeout = 5000
+        if routing_graph is not None:
+            envelope.routing_graph.CopyFrom(routing_graph.proto)
         self._add_version(envelope)
         self._add_route(pod_name, identity, envelope)
         envelope.check_version = check_version

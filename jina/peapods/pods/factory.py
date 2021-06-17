@@ -4,6 +4,7 @@ from typing import Optional, Set
 from .compound import CompoundPod
 from .. import BasePod
 from .. import Pod
+from ...enums import SocketType
 
 
 class PodFactory:
@@ -12,7 +13,11 @@ class PodFactory:
     """
 
     @staticmethod
-    def build_pod(args: 'Namespace', needs: Optional[Set[str]] = None) -> BasePod:
+    def build_pod(
+        args: 'Namespace',
+        needs: Optional[Set[str]] = None,
+        setup_dynamic_routing: bool = False,
+    ) -> BasePod:
         """Build an implementation of a `BasePod` interface
 
         :param args: pod arguments parsed from the CLI.
@@ -21,6 +26,13 @@ class PodFactory:
         :return: the created BasePod
         """
         if getattr(args, 'replicas', 1) > 1:
-            return CompoundPod(args, needs=needs)
+            pod = CompoundPod(args, needs=needs)
         else:
-            return Pod(args, needs=needs)
+            pod = Pod(args, needs=needs)
+
+        if setup_dynamic_routing:
+            pod.head_args.socket_in = SocketType.ROUTER_BIND
+            pod.tail_args.dynamic_out_routing = True
+            pod.tail_args.socket_out = SocketType.DEALER_CONNECT
+
+        return pod

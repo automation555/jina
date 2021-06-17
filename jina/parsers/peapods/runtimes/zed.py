@@ -85,6 +85,12 @@ reverse order. That is, if `__init__.py` depends on `A.py`, which again depends 
         default=SocketType.PUSH_BIND,
         help='The socket type for output port',
     )
+    gp.add_argument(
+        '--dynamic-out-routing',
+        action='store_true',
+        default=False,
+        help='Tells if ZEDRuntime should respect routing graph for outgoing traffic.',
+    )
 
     gp.add_argument(
         '--memory-hwm',
@@ -116,16 +122,6 @@ is wrong in the upstream, it is hard to carry this exception and moving forward 
         type=int,
         default=0,
         help='the number of messages expected from upstream, 0 and 1 means single part'
-        if _SHOW_ALL_ARGS
-        else argparse.SUPPRESS,
-    )
-
-    gp.add_argument(
-        '--freeze-network-settings',
-        action='store_true',
-        default=False,
-        help='''If set, then `host-in`, `host-out`, `port-in`, `port-out`, `socket-in`, `socket-out` network-related 
-        parameters are frozen. They can not be changed by the Flow during the build time. '''
         if _SHOW_ALL_ARGS
         else argparse.SUPPRESS,
     )
