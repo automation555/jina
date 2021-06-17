@@ -68,19 +68,11 @@ message NamedScoreProto {
 }
 
 /**
- * Represents the mapping of score by keys
- */
-message NamedScoreMappingProto {
-    map<string, NamedScoreProto> values = 1;
-}
-
-/**
  * Represents a Graph
  */
 message GraphProto {
     SparseNdArrayProto adjacency = 1; // adjacency list
     google.protobuf.Struct edge_features = 2; // Container structure to store edge features
-    bool undirected = 3; //Flag indicating if the graph is to be interpreted as an undirected graph
 }
 
 /**
@@ -143,14 +135,14 @@ message DocumentProto {
     // the embedding `ndarray` of this document
     NdArrayProto embedding = 19;
 
-    // Scores performed on the document, each element corresponds to a metric
-    NamedScoreMappingProto scores = 28;
+    // TODO: List of matching scores performed on the document, each element corresponds to a metric
+    NamedScoreProto score = 20;
 
     // modality, an identifier to the modality this document belongs to. In the scope of multi/cross modal search
     string modality = 21;
 
-    // Evaluations performed on the document, each element corresponds to a metric
-    NamedScoreMappingProto evaluations = 29;
+    // List of evaluations performed on the document, each element corresponds to a metric
+    repeated NamedScoreProto evaluations = 23;
 }
 
 /**
@@ -162,6 +154,22 @@ message RouteProto {
     google.protobuf.Timestamp start_time = 3; // receiving time
     google.protobuf.Timestamp end_time = 4; // sending (out) time
     StatusProto status = 5; // the status of the execution
+}
+
+message TargetPodProto{
+    string host = 1; // the host HeadPea of the BasePod
+    uint32 port = 2; // the port HeadPea of the BasePod
+    uint32 expected_parts = 3; // the number of parts, the pod should expect
+}
+
+message OutEdgesProto {
+    repeated uint32 targets = 1; // list of outedges of a BasePod
+}
+
+message RoutingGraphProto {
+    repeated TargetPodProto pods = 1; // Pods that get visited during a Flow
+    map<uint32, OutEdgesProto> edges = 2; // Outgoing Pods for each Pod in `pods`
+    uint32 active_pod_index = 3; // The currently active Pod. Needed for ZMQ.
 }
 
 /**
@@ -212,6 +220,8 @@ message EnvelopeProto {
     CompressConfigProto compression = 9; // compress configuration used for request
 
     repeated RouteProto routes = 10; // status info on every routes
+
+    RoutingGraphProto routing_graph = 13;
 
     StatusProto status = 11; // status info
 
